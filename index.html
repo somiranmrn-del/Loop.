@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Private Chat</title>
+<style>
+  :root{
+    --bg:#000;
+    --purple:purple;
+    --green:lime;
+    --darkviolet:darkviolet;
+    --blue:blue;
+    --msg-bg:#111;
+    --member-border: #333;
+  }
+  html,body{height:100%; margin:0; background:var(--bg); font-family:monospace; color:var(--green);}
+  /* layout */
+  #container{display:flex;flex-direction:column;height:100vh;width:100%}
+  .screen{display:none;align-items:center;justify-content:center;flex-direction:column;padding:20px}
+  /* chat layout */
+  #chatInterface{display:flex;flex-direction:column;height:100vh;width:100%}
+  #topBar{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;color:var(--purple);font-weight:700;box-sizing:border-box}
+  #divider{height:3px;background:var(--green);width:100%}
+  #messagesContainer{flex:1; overflow-y:auto; padding:12px 10px; box-sizing:border-box; display:flex; flex-direction:column; gap:10px;}
+  /* message bubbles */
+  .message{ max-width:72%; padding:10px 12px; border-radius:10px; display:flex; flex-direction:column; word-break:break-word; background:var(--msg-bg);}
+  .message-left{ align-self:flex-start; border:1px solid var(--darkviolet); }
+  .message-right{ align-self:flex-end; border:1px solid green; }
+  .message-left .meta{ display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+  .username{ color:var(--darkviolet); font-weight:700; }
+  .separator{ color:var(--blue); }
+  .text{ color:var(--green); }
+  .time{ color:#888; font-size:0.8rem; align-self:flex-end; margin-top:6px; }
+  /* input area */
+  #inputContainer{display:flex;gap:8px;padding:10px;box-sizing:border-box;border-top:1px solid rgba(255,255,255,0.04)}
+  #msgInput{flex:1;padding:10px;border-radius:6px;border:1px solid #333;background:#050505;color:var(--green);outline:none;font-family:monospace}
+  button{ background:var(--purple); color:white; border:none; padding:8px 10px; border-radius:6px; cursor:pointer; font-family:monospace }
+  input{ font-family:monospace }
+  /* master/register screens */
+  .centerPanel{ max-width:420px; width:100%; display:flex; flex-direction:column; gap:10px; align-items:stretch }
+  .centerPanel input{ padding:10px; border-radius:6px; border:1px solid #333; background:#050505; color:var(--green) }
+  /* top bar fixed effect: make top bar and divider always visible */
+  #topWrapper{ position:sticky; top:0; z-index:10; background:var(--bg); }
+  /* members list simple modal */
+  #membersModal{ display:none; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:#050505; border:1px solid #333; color:var(--green); padding:12px; border-radius:8px; z-index:50; min-width:260px; }
+  #membersModal h4{ margin:0 0 8px 0; color:var(--purple) }
+  #membersModal button{ margin-top:8px; width:100% }
+</style>
+</head>
+<body>
+<div id="container">
+  <!-- Master Password Screen (always shown first) -->
+  <div id="masterScreen" class="screen" style="display:flex;">
+    <div class="centerPanel">
+      <h2 style="color:var(--green); margin:0 0 6px 0; text-align:center">Enter Master Password</h2>
+      <input id="masterPass" type="password" placeholder="Master password" />
+      <button id="enterPass">Enter</button>
+      <small style="color:#888">Master password is required each session.</small>
+    </div>
+  </div>
+
+  <!-- Register Screen -->
+  <div id="registerScreen" class="screen">
+    <div class="centerPanel">
+      <h2 style="color:var(--green); margin:0 0 6px 0; text-align:center">Register</h2>
+      <input id="newUsername" type="text" placeholder="Choose username" />
+      <input id="newPassword" type="password" placeholder="Choose password" />
+      <button id="registerUser">Create Account</button>
+      <small style="color:#888">Username stored locally on this device.</small>
+    </div>
+  </div>
+
+  <!-- Chat Interface -->
+  <div id="chatInterface" style="display:none">
+    <div id="topWrapper">
+      <div id="topBar">
+        <div id="userDisplay">User: </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="detailsBtn">Members</button>
+          <button id="logoutBtn">Logout</button>
+        </div>
+      </div>
+      <div id="divider"></div>
+    </div>
+
+    <div id="messagesContainer" aria-live="polite"></div>
+
+    <div id="inputContainer">
+      <input id="msgInput" placeholder="Type a message" autocomplete="off" />
+      <button id="sendMsg">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- Members modal -->
+<div id="membersModal" role="dialog" aria-modal="true">
+  <h4>Connected Members</h4>
+  <pre id="membersList" style="white-space:pre-wrap;margin:0;color:var(--green)"></pre>
+  <button id="closeMembers">Close</button>
+</div>
+
+<!-- Firebase (compat) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<script>
+/* -------------------------
+   Firebase configuration
+   (you provided these values)
+   ------------------------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyAMMwJ5SSZH1zams10xnUHtxhW3d1RljRU",
+  authDomain: "private-chat-5dbc4.firebaseapp.com",
+  databaseURL: "https://private-chat-5dbc4-default-rtdb.firebaseio.com",
+  projectId: "private-chat-5dbc4",
+  storageBucket: "private-chat-5dbc4.appspot.com",
+  messagingSenderId: "125805958676",
+  appId: "1:125805958676:web:16a7e14e45ba0c5bf43901",
+  measurementId: "G-7D71W8LVHV"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+/* -------------------------
+   App variables & DOM
+   ------------------------- */
+const MASTER_PASSWORD = "x21B";      // required master password
+let username = "";
+let members = {}; // online users Map (from DB)
+
+const masterScreen = document.getElementById('masterScreen');
+const registerScreen = document.getElementById('registerScreen');
+const chatInterface = document.getElementById('chatInterface');
+const messagesContainer = document.getElementById('messagesContainer');
+const userDisplay = document.getElementById('userDisplay');
+const msgInput = document.getElementById('msgInput');
+
+const enterPassBtn = document.getElementById('enterPass');
+const registerBtn = document.getElementById('registerUser');
+const sendBtn = document.getElementById('sendMsg');
+const detailsBtn = document.getElementById('detailsBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const membersModal = document.getElementById('membersModal');
+const membersList = document.getElementById('membersList');
+const closeMembers = document.getElementById('closeMembers');
+
+/* -------------------------
+   Initial UI state
+   ------------------------- */
+masterScreen.style.display = 'flex';
+registerScreen.style.display = 'none';
+chatInterface.style.display = 'none';
+
+/* -------------------------
+   Utility: create message element
+   ------------------------- */
+function addMessage(msgObj){
+  // msgObj: { username, text, time }
+  const timeStr = new Date(msgObj.time).toLocaleTimeString();
+  const el = document.createElement('div');
+  if(msgObj.username === username){
+    el.className = 'message message-right';
+    el.innerHTML = `<span class="text">${escapeHTML(msgObj.text)}</span><span class="time">${timeStr}</span>`;
+  } else {
+    el.className = 'message message-left';
+    el.innerHTML = `<div class="meta"><span class="username">${escapeHTML(msgObj.username)}</span><span class="separator">>></span></div><div class="text">${escapeHTML(msgObj.text)}</div><span class="time">${timeStr}</span>`;
+  }
+  messagesContainer.appendChild(el);
+  // smooth auto-scroll to bottom
+  messagesContainer.scrollTo({ top: messagesContainer.scrollHeight, behavior: 'smooth' });
+}
+
+/* small escape to avoid HTML injection */
+function escapeHTML(s){
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#039;');
+}
+
+/* -------------------------
+   Master password flow
+   ------------------------- */
+enterPassBtn.addEventListener('click', ()=> {
+  const v = document.getElementById('masterPass').value || "";
+  if(v !== MASTER_PASSWORD){
+    alert("Wrong master password");
+    return;
+  }
+  // master password ok -> continue
+  const saved = localStorage.getItem('username');
+  masterScreen.style.display = 'none';
+  if(saved){
+    username = saved;
+    startChatUI();
+  } else {
+    registerScreen.style.display = 'flex';
+  }
+});
+
+/* -------------------------
+   Registration
+   ------------------------- */
+registerBtn.addEventListener('click', ()=> {
+  const u = document.getElementById('newUsername').value.trim();
+  const p = document.getElementById('newPassword').value.trim();
+  if(!u || !p){
+    alert("Enter username & password");
+    return;
+  }
+  // store locally
+  username = u;
+  localStorage.setItem('username', u);
+  localStorage.setItem('password', p);
+  // hide register, show chat
+  registerScreen.style.display = 'none';
+  startChatUI();
+});
+
+/* -------------------------
+   Start Chat UI (after auth/registration)
+   ------------------------- */
+function startChatUI(){
+  userDisplay.textContent = "User: " + username;
+  chatInterface.style.display = 'flex';
+  goOnline();
+  setupListeners();
+}
+
+/* -------------------------
+   Send message
+   ------------------------- */
+sendBtn.addEventListener('click', sendMessage);
+msgInput.addEventListener('keydown', (e)=> {
+  if(e.key === 'Enter') sendMessage();
+});
+
+function sendMessage(){
+  const text = msgInput.value.trim();
+  if(!text) return;
+  const payload = { username: username, text: text, time: Date.now() };
+  db.ref('messages').push(payload, (err) => {
+    if(err) {
+      console.error("Failed to push message:", err);
+      alert("Message send failed.");
+    } else {
+      msgInput.value = "";
+    }
+  });
+}
+
+/* -------------------------
+   Firebase listeners and online tracking
+   ------------------------- */
+let messagesListenerAttached = false;
+
+function setupListeners(){
+  if(!messagesListenerAttached){
+    db.ref('messages').limitToLast(100).on('child_added', snap => {
+      const data = snap.val();
+      if(!data) return;
+      addMessage(data);
+    });
+    messagesListenerAttached = true;
+  }
+
+  // track online members list
+  db.ref('online').on('value', snap => {
+    members = snap.val() || {};
+    // update members list text if modal open
+    updateMembersModal();
+  });
+}
+
+/* -------------------------
+   Go online (and ensure onDisconnect removal)
+   ------------------------- */
+function goOnline(){
+  const onlineRef = db.ref('online/' + username);
+  onlineRef.set({ since: Date.now() }, (err)=>{
+    if(err) console.warn("online set failed", err);
+  });
+  onlineRef.onDisconnect().remove();
+}
+
+/* -------------------------
+   Members modal actions
+   ------------------------- */
+detailsBtn.addEventListener('click', ()=> {
+  updateMembersModal();
+  membersModal.style.display = 'block';
+});
+closeMembers.addEventListener('click', ()=> membersModal.style.display = 'none');
+
+function updateMembersModal(){
+  const names = Object.keys(members || {});
+  membersList.textContent = names.length ? names.join('\n') : '(no one online)';
+}
+
+/* -------------------------
+   Logout
+   ------------------------- */
+logoutBtn.addEventListener('click', ()=> {
+  db.ref('online/' + username).remove().catch(()=>{});
+  localStorage.removeItem('username');
+  localStorage.removeItem('password');
+  // reload to master password screen
+  location.reload();
+});
+
+/* -------------------------
+   Helpful console logs (optional)
+   ------------------------- */
+console.log("App ready. Firebase DB URL:", firebaseConfig.databaseURL);
+</script>
+</body>
+</html>
